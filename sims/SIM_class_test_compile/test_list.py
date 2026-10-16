@@ -25,15 +25,25 @@
 
 import os
 import sys
+import subprocess
 
 # Make & build the test sim for the given class header file, concatenate any build errors
 # to the overall output errors file.
 def testtype(classpath):
-    os.system('make clean')
-    os.system('python3 gen_sm.py ' + classpath)
-    os.system('trick-CP')
+    for command in (['make', 'clean'], [sys.executable, 'gen_sm.py', classpath], ['trick-CP']):
+        try:
+            status = subprocess.call(command)
+        except OSError as error:
+            print(error)
+            status = 127
+        if status != 0:
+            with open('test_all_output_errors', 'a') as output:
+                output.write('COMMAND FAILED: {} exited {}\n'.format(' '.join(command), status))
+            return True
     if os.path.isfile('build/MAKE_err'):
-        os.system('cat build/MAKE_err >> test_all_output_errors')
+        with open('build/MAKE_err') as errors, open('test_all_output_errors', 'a') as output:
+            output.write(errors.read())
+    return False
 
 ###################
 # Begin Main Script
@@ -60,6 +70,7 @@ with open('class_test_list.py', 'r') as flist:
 
 # Read gunns/lib/trick_if/S_source.hh (requires lib/trick to have been built).
 anytests = False
+commands_failed = False
 with open('../../lib/trick_if/S_source.hh', 'r') as fsources:
     # each line is similar to:
     # #include "aspects/dynamics/GunnsDynEuler321.hh"
@@ -78,7 +89,7 @@ with open('../../lib/trick_if/S_source.hh', 'r') as fsources:
                     print("\n\n-=#=-=#=-=#=-=#=-=#=-")
                     print("Testing ", classpath, ":")
                     anytests = True
-                    testtype(classpath)
+                    commands_failed = testtype(classpath) or commands_failed
 
 if anytests:
     # Scan the output file for errors, output overall pass/fail
@@ -87,7 +98,7 @@ if anytests:
         results = open(outputfile).read()
         print('\n\n-=#=-=#=-=#=-=#=-=#=-\nContents of test_all_output_errors file:\n')
         print(results)
-        if 'error' in results or 'undefined' in results or 'unresolved' in results:
+        if commands_failed or 'error' in results or 'undefined' in results or 'unresolved' in results:
             print("-=#=-=#=-=#=-=#=-=#=-")
             print('TEST FAILED')
             sys.exit(1)

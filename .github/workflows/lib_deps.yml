@@ -21,15 +21,29 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel obsolete runs for the same pull request or branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+  pull-requests: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   lib_deps:
-    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
     container: docker://oraclelinux:8
 
     steps:
     - name: Update package manager
       run: |
-        dnf -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+        dnf -y install dnf-plugins-core https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
         dnf config-manager --set-enabled ol8_codeready_builder
         dnf -y update
 
@@ -41,6 +55,15 @@ jobs:
         ncurses-devel openmotif openmotif-devel perl perl-Digest-MD5 udunits2
         udunits2-devel which zlib-devel libX11-devel libXt-devel python3-devel diffutils
 
+    - name: Checkout repository
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node 24 supports Oracle Linux 8
+
+    - name: Record compiler and package versions
+      run: |
+        mkdir -p ci-logs
+        { cat /etc/os-release; gcc --version; g++ --version; make --version; python3 --version; rpm -qa | sort; } > ci-logs/toolchain.txt
+        cat ci-logs/toolchain.txt
+
     - name: Build Trick
       # Failure here is likely due to new or changed dependencies of Trick, see above
       # For issue #93: we use the same fix as Trick for assigning JAVA_HOME, see:
@@ -49,13 +72,17 @@ jobs:
         export TRICK_HOME="/home/trick"
         export MAKEFLAGS=-j`nproc`
         export JAVA_HOME=$(dirname $(dirname $(readlink -f `which java`)))
-        git clone https://github.com/nasa/trick.git ${TRICK_HOME}
+        git init ${TRICK_HOME}
+        git -C ${TRICK_HOME} remote add origin https://github.com/nasa/trick.git
+        git -C ${TRICK_HOME} fetch --depth=1 origin e101223edcd31f18595dee77faadd861e2c134f9
+        git -C ${TRICK_HOME} checkout --detach FETCH_HEAD
+        test "$(git -C ${TRICK_HOME} rev-parse HEAD)" = "e101223edcd31f18595dee77faadd861e2c134f9"
+        mkdir -p "${GITHUB_WORKSPACE}/ci-logs"
+        git -C ${TRICK_HOME} show -s --format=fuller HEAD | tee "${GITHUB_WORKSPACE}/ci-logs/trick-version.txt"
         cd ${TRICK_HOME}
-        ./configure
-        make
-
-    - name: Checkout repository
-      uses: actions/checkout@master
+        ./configure 2>&1 | tee "${GITHUB_WORKSPACE}/ci-logs/trick-configure.log"
+        make 2>&1 | tee "${GITHUB_WORKSPACE}/ci-logs/trick-build.log"
+        ./bin/trick-config --version | tee -a "${GITHUB_WORKSPACE}/ci-logs/trick-version.txt"
 
     # TODO use better way to define env vars globally for all steps
     - name: Build gunns/lib/trick
@@ -64,12 +91,12 @@ jobs:
         export GUNNS_TRICK_HOME="/home/trick"
         export GUNNS_HOME=`pwd`
         cd lib/trick
-        make OPTS='-O2'
+        make OPTS='-O2' 2>&1 | tee "${GUNNS_HOME}/ci-logs/gunns-trick-build.log"
 
     # Reference: https://github.com/marketplace/actions/get-all-changed-files
     - id: files
       name: List added and modified files in commit
-      uses: jitterbit/get-changed-files@v1
+      uses: jitterbit/get-changed-files@b17fbb00bdc0c0f63fcf166580804b4d2cdc2a42 # v1
     - name: Write class test list
       run: |
         cd sims/SIM_class_test_compile
@@ -91,4 +118,16 @@ jobs:
         export MS_UTILS_HOME="${GUNNS_HOME}/ms-utils"
         export TS_MODELS_HOME="${GUNNS_HOME}/gunns-ts-models"
         cd sims/SIM_class_test_compile
-        python3 ./test_list.py
+        python3 ./test_list.py 2>&1 | tee "${GUNNS_HOME}/ci-logs/class-compile.log"
+
+    - name: Upload diagnostics
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: lib_deps-diagnostics
+        retention-days: 7
+        if-no-files-found: warn
+        path: |
+            ci-logs/**
+            sims/SIM_class_test_compile/test_all_output_errors
+            sims/SIM_class_test_compile/build/MAKE_err

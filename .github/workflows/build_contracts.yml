@@ -1,0 +1,56 @@
+name: Build Contracts
+
+on:
+  push:
+    branches:
+    - master
+    paths-ignore:
+    - 'README.md'
+    - 'draw/**'
+    - 'bin/utils/simbus_icd_input_gen/**'
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  structural_and_no_trick:
+    timeout-minutes: 20
+    runs-on: ubuntu-24.04
+    container: docker://oraclelinux:8
+    steps:
+    - name: Install build and fixture dependencies
+      run: dnf -y install git make gcc gcc-c++ libasan python3 tcsh
+
+    - name: Checkout repository
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node 24 supports Oracle Linux 8
+
+    - name: Record compiler and package versions
+      run: |
+        mkdir -p ci-logs
+        { cat /etc/os-release; gcc --version; g++ --version; make --version; python3 --version; rpm -qa | sort; } > ci-logs/toolchain.txt
+        cat ci-logs/toolchain.txt
+
+    - name: Run focused build and CI regressions
+      run: python3 -m unittest discover -s test/build_regression -v 2>&1 | tee ci-logs/structural-tests.log
+
+    - name: Build no_trick and verify a warm header rebuild
+      run: python3 test/CI/build_contract_smoke.py 2>&1 | tee ci-logs/no-trick-build.log
+
+    - name: Upload diagnostics
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: build-contract-diagnostics
+        retention-days: 7
+        if-no-files-found: warn
+        path: ci-logs/**
