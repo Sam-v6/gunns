@@ -112,6 +112,38 @@ class CiGates(unittest.TestCase):
         self.assertIn('SUMMARY: AddressSanitizer:', diagnostics)
         self.assertNotEqual(self.scan(True, 'suite: OK (1 tests)\n' + diagnostics).returncode, 0)
 
+    def test_macro_suite_without_production_coverage(self):
+        executable = self.root / 'unit-tests'
+        executable.write_text('#!/bin/sh\necho "OK (24)"\n')
+        executable.chmod(0o755)
+        (self.root / 'empty.info').touch()
+        self.executable('genhtml', '#!/bin/sh\necho "no valid records found"\nexit 255\n')
+        self.executable('valgrind', '#!/bin/sh\necho "OK (24)"\necho "==3== ERROR SUMMARY: 0 errors"\n')
+        for makefile, passed in [
+            ('test/utils/Makefile.default', False),
+            ('ms-utils/software/SimCompatibility/test/Makefile', True),
+        ]:
+            with self.subTest(makefile=makefile):
+                if (self.root / 'output').exists():
+                    shutil.rmtree(str(self.root / 'output'))
+                result = self.run_command([
+                    'make', '-f', str(REPO / makefile), '-o', './unit-tests',
+                    '-o', 'empty.info', 'coverage_info=empty.info',
+                    'GUNNS_HOME=' + str(REPO), 'test'])
+                self.assertEqual(result.returncode == 0, passed, result.stdout)
+                if passed:
+                    self.assertIn('Coverage not applicable: macro expansions', result.stdout)
+                    self.assertIn('OK (24)', (self.root / 'output/unit-tests.log').read_text())
+                    self.assertIn('ERROR SUMMARY: 0 errors',
+                                  (self.root / 'output/unit-tests-valgrind.log').read_text())
+                    self.assertFalse((self.root / 'output/coverage/index.html').exists())
+                    self.executable('valgrind', '#!/bin/sh\necho "==3== ERROR SUMMARY: 1 errors"\nexit 42\n')
+                    (self.root / 'output/unit-tests-valgrind.log').unlink()
+                    result = self.run_command([
+                        'make', '-f', str(REPO / makefile), '-o', './unit-tests',
+                        'GUNNS_HOME=' + str(REPO), 'test'])
+                    self.assertNotEqual(result.returncode, 0, result.stdout)
+
     def runner(self, asan, scenario='pass', suites=True):
         if not shutil.which('tcsh'):
             self.skipTest('tcsh required for aggregate runner fixtures')
