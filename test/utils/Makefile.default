@@ -86,9 +86,17 @@ $(OBJECTS): build/%.o : %.cpp | $(OBJDIRS)
 $(OBJDIRS) output $(coverage_output_dir):
 	mkdir -p $@
 
-test: $(unit_test_html) $(coverage_html) $(valgrind_html)
+ifndef NO_COVERAGE
+test: $(coverage_html)
+endif
+
+test: $(unit_test_html) $(valgrind_html)
 	@echo "Unit test output log at $(test_dir)/$(unit_test_html)"
+ifndef NO_COVERAGE
 	@echo "Coverage output at $(test_dir)/$(coverage_html)"
+else
+	@echo "Coverage not applicable: macro expansions are attributed to test call sites."
+endif
 	@echo "Valgrind output log at $(test_dir)/$(valgrind_html)"
 
 test_asan: $(unit_test_html)

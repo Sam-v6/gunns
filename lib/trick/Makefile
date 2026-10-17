@@ -113,19 +113,19 @@ $(GUNNSROSESLIB) : $(CUDAOBJECTS_CC) $(CUDAOBJECTS_C)
 	@ echo "$$HEADERS" > ../trick_if/S_source.hh
 
 $(OBJECTS_CC) : build%.o : %.cpp | $(OBJDIRS_CC)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(OBJECTS_C) : build%.o : %.c | $(OBJDIRS_C)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(OBJDIRS_CC) $(OBJDIRS_C) :
 	mkdir -p $@
 
 $(CUDAOBJECTS_CC) : buildroses%.o : %.cpp | $(CUDAOBJDIRS_CC)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(CUDAOBJECTS_C) : buildroses%.o : %.c | $(CUDAOBJDIRS_C)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(CUDAOBJDIRS_CC) $(CUDAOBJDIRS_C) :
 	mkdir -p $@
@@ -133,3 +133,6 @@ $(CUDAOBJDIRS_CC) $(CUDAOBJDIRS_C) :
 clean:
 	rm -rf build buildroses $(GUNNSLIB) $(GUNNSROSESLIB)
 	rm ../trick_if/S_source.hh
+
+# Existing objects need one clean rebuild to generate header dependencies.
+-include $(OBJECTS_CC:.o=.d) $(OBJECTS_C:.o=.d) $(CUDAOBJECTS_CC:.o=.d) $(CUDAOBJECTS_C:.o=.d)

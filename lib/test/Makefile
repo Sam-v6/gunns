@@ -79,10 +79,10 @@ $(GUNNSROSESLIB) : $(CUDAOBJECTS)
 	@ echo "---------------------------------------------------------------"
 
 $(OBJECTS) : build%.o : %.cpp | $(OBJDIRS)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(CUDAOBJECTS) : buildroses%.o : %.cpp | $(CUDAOBJDIRS)
-	$(CXX) $(CXXFLAGS) $(INCDIRS) -c $< -o $@
+	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
 
 $(OBJDIRS) :
 	mkdir -p $@
@@ -94,3 +94,5 @@ clean:
 	rm -rf build $(GUNNSLIB)
 	rm -rf buildroses $(GUNNSROSESLIB)
 
+# Existing objects need one clean rebuild to generate header dependencies.
+-include $(OBJECTS:.o=.d) $(CUDAOBJECTS:.o=.d)
