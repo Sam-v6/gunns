@@ -58,4 +58,9 @@ else
 
     # Link in the model library.
     TRICK_USER_LINK_LIBS += $(GUNNS_TRICK)
+
+    # S_MAIN is unset during Trick variable probes.
+    ifneq ($(strip $(S_MAIN)),)
+        $(S_MAIN): $(GUNNS_TRICK) $(GUNNS_TRICK_IF)
+    endif
 endif

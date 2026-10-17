@@ -88,21 +88,28 @@ HEADERS := $(subst $(GUNNS_HOME)/,${pre}, $(HEADERS))
 export HEADERS
 #$(info $$HEADERS is [${HEADERS}])
 
-all: ${GUNNSLIB}
+all: ${GUNNSLIB} ../trick_if/S_source.hh
 
 roses: CXXFLAGS += -I/usr/local/cuda/include -L/usr/local/cuda/lib64 -DGUNNS_CUDA_ENABLE=1
-roses: ${GUNNSROSESLIB}
+roses: ${GUNNSROSESLIB} ../trick_if/S_source.hh
 
-$(GUNNSLIB) : $(OBJECTS_CC) $(OBJECTS_C)
+.PHONY: FORCE
+FORCE:
+
+# Refresh the header list without invalidating unchanged Trick-generated code.
+../trick_if/S_source.hh: FORCE
+	@ echo "$$HEADERS" > $@.tmp
+	@ if cmp -s $@.tmp $@; then rm -f $@.tmp; else mv -f $@.tmp $@; fi
+
+$(GUNNSLIB) : $(OBJECTS_CC) $(OBJECTS_C) | ../trick_if/S_source.hh
 	ar crs $@ $^
 	@ echo "-------------------------------------------------"
 	@ echo " GUNNS LIBRARY FOR TRICK SIMS BUILD COMPLETE"
 	@ echo " Library file is: ${GUNNSLIB}"
 	@ echo " built with options: ${OPTS}"
 	@ echo "-------------------------------------------------"
-	@ echo "$$HEADERS" > ../trick_if/S_source.hh
 
-$(GUNNSROSESLIB) : $(CUDAOBJECTS_CC) $(CUDAOBJECTS_C)
+$(GUNNSROSESLIB) : $(CUDAOBJECTS_CC) $(CUDAOBJECTS_C) | ../trick_if/S_source.hh
 	ar crs $@ $^
 	@ echo "----------------------------------------------------------"
 	@ echo " GUNNS & ROSES LIBRARY FOR TRICK SIMS BUILD COMPLETE"
@@ -110,7 +117,6 @@ $(GUNNSROSESLIB) : $(CUDAOBJECTS_CC) $(CUDAOBJECTS_C)
 	@ echo " Library file is: ${GUNNSROSESLIB}"
 	@ echo " built with options: ${OPTS}"
 	@ echo "----------------------------------------------------------"
-	@ echo "$$HEADERS" > ../trick_if/S_source.hh
 
 $(OBJECTS_CC) : build%.o : %.cpp | $(OBJDIRS_CC)
 	$(CXX) $(CXXFLAGS) $(INCDIRS) -MMD -MP -c $< -o $@
