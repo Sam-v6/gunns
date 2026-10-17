@@ -16,9 +16,22 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel obsolete runs for the same pull request or branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   all_unit_tests:
-    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    runs-on: ubuntu-24.04
     container: docker://oraclelinux:8
 
     steps:
@@ -33,7 +46,13 @@ jobs:
       run: yum install -y tcsh make gcc gcc-c++ cppunit cppunit-devel lcov valgrind python3
 
     - name: Checkout repository
-      uses: actions/checkout@master
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node 24 supports Oracle Linux 8
+
+    - name: Record compiler and package versions
+      run: |
+        mkdir -p ci-logs
+        { cat /etc/os-release; gcc --version; g++ --version; make --version; python3 --version; rpm -qa | sort; } > ci-logs/toolchain.txt
+        cat ci-logs/toolchain.txt
 
     - name: Run tests
       run: |
@@ -49,7 +68,21 @@ jobs:
         chmod a-r ms-utils/parsing/test/nopermission
         # Make & run unit tests
         cd test
-        ./make_all_ut.sh
+        ./make_all_ut.sh 2>&1 | tee "${GUNNS_HOME}/ci-logs/unit-tests.log"
         # Scan results for pass/fail
         chmod +x scan_all_ut.py
         python3 ./scan_all_ut.py
+
+    - name: Upload diagnostics
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: unit_test-diagnostics
+        retention-days: 7
+        if-no-files-found: warn
+        path: |
+            ci-logs/**
+            test/make_all_ut*.out
+            **/output/unit-tests*.log
+            **/output/asan.log*
+            **/output/unit-tests.info

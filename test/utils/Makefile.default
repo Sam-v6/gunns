@@ -111,7 +111,7 @@ $(unit_test_html): $(unit_test_log) | output
 	|| rm -f $@
 
 $(unit_test_log): output
-	@$(test_exe) | tee $@
+	@bash -o pipefail -c '$(test_exe) 2>&1 | tee $@'
 
 $(coverage_html): $(coverage_info) | $(coverage_output_dir)
 ifndef ASAN
@@ -135,8 +135,7 @@ endif
 
 $(valgrind_log): $(test_exe) output
 ifndef ASAN
-	valgrind --leak-check=yes --suppressions=${GUNNS_HOME}/test/utils/gunns.supp $(test_exe) 2>&1 | grep -v 'libcppunit' > $@
-	cat $@
+	bash -o pipefail -c 'valgrind --error-exitcode=1 --leak-check=yes --suppressions=${GUNNS_HOME}/test/utils/gunns.supp $(test_exe) 2>&1 | grep -v libcppunit | tee $@'
 endif
 
 clean:

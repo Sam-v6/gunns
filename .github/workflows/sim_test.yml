@@ -20,15 +20,28 @@ on:
   pull_request:
   workflow_dispatch:
 
+# Cancel obsolete runs for the same pull request or branch.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
 jobs:
   sim_test:
-    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    runs-on: ubuntu-24.04
     container: docker://oraclelinux:8
 
     steps:
     - name: Update package manager
       run: |
-        dnf -y install https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
+        dnf -y install dnf-plugins-core https://dl.fedoraproject.org/pub/epel/epel-release-latest-8.noarch.rpm
         dnf config-manager --set-enabled ol8_codeready_builder
         dnf -y update
 
@@ -47,7 +60,13 @@ jobs:
       run: dnf install -y tk-devel
 
     - name: Checkout repository
-      uses: actions/checkout@master
+      uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0, Node 24 supports Oracle Linux 8
+
+    - name: Record compiler and package versions
+      run: |
+        mkdir -p ci-logs
+        { cat /etc/os-release; gcc --version; g++ --version; make --version; python3 --version; rpm -qa | sort; } > ci-logs/toolchain.txt
+        cat ci-logs/toolchain.txt
 
     - name: Build Trick
       # Failure here is likely due to new or changed dependencies of Trick, see above
@@ -57,10 +76,28 @@ jobs:
         export TRICK_HOME="/home/trick"
         export MAKEFLAGS=-j`nproc`
         export JAVA_HOME=$(dirname $(dirname $(readlink -f `which java`)))
-        git clone https://github.com/nasa/trick.git ${TRICK_HOME}
+        git init ${TRICK_HOME}
+        git -C ${TRICK_HOME} remote add origin https://github.com/nasa/trick.git
+        git -C ${TRICK_HOME} fetch --depth=1 origin e101223edcd31f18595dee77faadd861e2c134f9
+        git -C ${TRICK_HOME} checkout --detach FETCH_HEAD
+        test "$(git -C ${TRICK_HOME} rev-parse HEAD)" = "e101223edcd31f18595dee77faadd861e2c134f9"
+        mkdir -p "${GITHUB_WORKSPACE}/ci-logs"
+        git -C ${TRICK_HOME} show -s --format=fuller HEAD | tee "${GITHUB_WORKSPACE}/ci-logs/trick-version.txt"
         cd ${TRICK_HOME}
-        ./configure
-        make
+        ./configure 2>&1 | tee "${GITHUB_WORKSPACE}/ci-logs/trick-configure.log"
+        make 2>&1 | tee "${GITHUB_WORKSPACE}/ci-logs/trick-build.log"
+        ./bin/trick-config --version | tee -a "${GITHUB_WORKSPACE}/ci-logs/trick-version.txt"
+
+    - name: Build prebuilt GUNNS libraries
+      run: |
+        export TRICK_HOME="/home/trick"
+        export GUNNS_TRICK_HOME="${TRICK_HOME}"
+        export GUNNS_HOME="${GITHUB_WORKSPACE}"
+        export PATH="${TRICK_HOME}/bin:${PATH}"
+        make -C lib/trick -j4 OPTS='-O2' 2>&1 | tee ci-logs/gunns-trick-build.log
+        make -C lib/trick_if -j4 2>&1 | tee ci-logs/gunns-trick-if-build.log
+        test -s lib/trick/libgunns.a
+        test -s lib/trick_if/libgunns.o
 
     # TODO use better way to define env vars globally for all steps
     - name: Build sim
@@ -72,7 +109,8 @@ jobs:
         export TS_MODELS_HOME="${GUNNS_HOME}/gunns-ts-models"
         export HS_CONFIG_PATH="${GUNNS_HOME}/sims/Modified_data"
         cd sims/SIM_test
-        ${TRICK_HOME}/bin/trick-CP
+        ${TRICK_HOME}/bin/trick-CP 2>&1 | tee "${GUNNS_HOME}/ci-logs/sim-build.log"
+        grep -F "GUNNS trickified lib ${GUNNS_HOME}/lib/trick_if/libgunns.o is being included." "${GUNNS_HOME}/ci-logs/sim-build.log"
 
     - name: Run sim
       run: |
@@ -83,7 +121,9 @@ jobs:
         export TS_MODELS_HOME="${GUNNS_HOME}/gunns-ts-models"
         export HS_CONFIG_PATH="${GUNNS_HOME}/sims/Modified_data"
         cd sims/SIM_test
-        ./S_main* RUN_test/input_int_test.py
+        # Remove the checked-in sample report so only this run can satisfy the gate.
+        rm -f RUN_test/results/SIM_test_int_test_results.xml
+        ./S_main* RUN_test/input_int_test.py 2>&1 | tee "${GUNNS_HOME}/ci-logs/sim-run.log"
 
     - name: Check sim outputs for pass/fail
       run: |
@@ -91,3 +131,15 @@ jobs:
         cd test/CI
         chmod +x sim_test.py
         python3 ./sim_test.py
+
+    - name: Upload diagnostics
+      if: always()
+      uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+      with:
+        name: sim_test-diagnostics
+        retention-days: 7
+        if-no-files-found: warn
+        path: |
+            ci-logs/**
+            sims/SIM_test/build/MAKE_err
+            sims/SIM_test/RUN_test/results/**

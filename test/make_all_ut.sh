@@ -15,13 +15,25 @@ echo ' ' > $OUT
 echo '**** make_all_ut summary ****' >> $OUT
 
 # clean & re-build the test compiled lib
-cd $GUNNS_HOME/lib/test; make clean; make;
+cd $GUNNS_HOME/lib/test
+make clean
+if ($status != 0) then
+    echo 'COMMAND FAILED: lib/test make clean' >> $OUT
+    exit 1
+endif
+make
+if ($status != 0) then
+    echo 'COMMAND FAILED: lib/test make' >> $OUT
+    exit 1
+endif
 
 # Array of partial paths of excluded subfolders
 set excluded_subfolder_partials = ("ThermAspectGenerate/test" "radiation/test" "radiation/network/test" "networks/electrical/test" "networks/fluid/test" "networks/basic/test" "cuda/test" "intersect/test" "hs/test" "software/unit_test/test" "software/exceptions/test" "lib/test")
 
 # Find all "test" folders below the current directory
 set test_folders = `find $GUNNS_HOME -type d -name "test" -exec test -e "{}/Makefile" \; -print`
+
+set suite_count = 0
 
 # Loop through each test folder
 foreach test_folder ($test_folders)
@@ -43,9 +55,20 @@ foreach test_folder ($test_folders)
         
         # Run
         echo "Running commands in: $FOLDER"
-        cd $FOLDER; make clean; make;
+        @ suite_count++
+        cd $FOLDER
+        make clean
+        if ($status != 0) echo "$FOLDER\: COMMAND FAILED: make clean" >> $OUT
+        make
+        if ($status != 0) echo "$FOLDER\: COMMAND FAILED: make" >> $OUT
         if ( -f $FOLDER/output/unit-tests-valgrind.log ) then
-            echo $FOLDER\: `grep -E 'OK \(*|FAILURES\!|Failures \!' $FOLDER/output/unit-tests-valgrind.log` `grep 'ERROR SUMMARY' $FOLDER/output/unit-tests-valgrind.log | grep -v ' 0 errors'` >> $OUT
+            set test_result = "`grep -s -E 'OK \(*|FAILURES\!|Failures \!' $FOLDER/output/unit-tests-valgrind.log`"
+            if ("$test_result" == "") then
+                echo "$FOLDER\: NO TEST OUTPUT" >> $OUT
+            else
+                echo "$FOLDER\: $test_result" >> $OUT
+            endif
+            grep -s 'ERROR SUMMARY' $FOLDER/output/unit-tests-valgrind.log >> $OUT
         else
             echo $FOLDER\: NO TEST OUTPUT, possibly failed to build! >> $OUT
         endif
@@ -57,6 +80,9 @@ end
 ########################################################
 # Summarize results to screen
 ########################################################
+echo "SUITES RUN: $suite_count" >> $OUT
 echo ' ' >> $OUT
 tail -n 100 $OUT
-cd $GUNNS_HOME
+cd $OUT:h
+python3 $GUNNS_HOME/test/scan_all_ut.py
+exit $status
